@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>AP List CSV Generator 🥔</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                color: #333;
+            }
+            .dropzone {
+                border: 2px dashed #0087f7;
+                border-radius: 5px;
+                padding: 60px;
+                text-align: center;
+                margin: 20px 0;
+                cursor: pointer;
+                transition: background 0.3s;
+            }
+            .dropzone:hover {
+                background: #f5f5f5;
+            }
+            .dropzone.highlight {
+                background: #eaf2f8;
+                border-color: #2874a6;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            }
+            th,
+            td {
+                padding: 12px 15px;
+                text-align: left;
+                border-bottom: 1px solid #ddd;
+            }
+            th {
+                background-color: #4caf50;
+                color: white;
+                position: sticky;
+                top: 0;
+            }
+            tr:hover {
+                background-color: #f5f5f5;
+            }
+            .button {
+                background-color: #4caf50;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                text-align: center;
+                text-decoration: none;
+                display: inline-block;
+                font-size: 16px;
+                margin: 20px 5px 0 0;
+                cursor: pointer;
+                border-radius: 5px;
+                transition: background 0.3s;
+            }
+            .button:hover {
+                background-color: #45a049;
+            }
+            .button:disabled {
+                background-color: #cccccc;
+                cursor: not-allowed;
+            }
+            #results {
+                display: none;
+                margin-top: 20px;
+            }
+            .status {
+                margin: 10px 0;
+                padding: 10px;
+                border-radius: 5px;
+            }
+            .success {
+                background-color: #d4edda;
+                color: #155724;
+            }
+            .error {
+                background-color: #f8d7da;
+                color: #721c24;
+            }
+            .loader {
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #4caf50;
+                border-radius: 50%;
+                width: 30px;
+                height: 30px;
+                animation: spin 2s linear infinite;
+                margin: 20px auto;
+                display: none;
+            }
+            @keyframes spin {
+                0% {
+                    transform: rotate(0deg);
+                }
+                100% {
+                    transform: rotate(360deg);
+                }
+            }
+        </style>
+    </head>
+    <body>
+        <h1>AP List CSV Generator 🥔</h1>
+        <p>
+            Drag and drop an OpenIntent JSON file to convert it to a CSV list of
+            access points.
+        </p>
+
+        <div id="dropzone" class="dropzone">
+            <p>
+                Drag & Drop your OpenIntent JSON file here or
+                <strong>click to select</strong>
+            </p>
+            <input
+                type="file"
+                id="fileInput"
+                style="display: none"
+                accept=".json"
+            />
+        </div>
+
+        <div id="loader" class="loader"></div>
+
+        <div id="statusMessage" class="status"></div>
+
+        <div id="results">
+            <h2>AP List</h2>
+            <button id="copyCSV" class="button" disabled>
+                Copy to clipboard
+            </button>
+            <button id="downloadCSV" class="button" disabled>
+                Download CSV file
+            </button>
+
+            <div style="overflow-x: auto">
+                <table id="apTable">
+                    <thead>
+                        <tr>
+                            <th>Map Name</th>
+                            <th>AP Name</th>
+                            <th>2.4 GHz Channel</th>
+                            <th>5 GHz Channel</th>
+                            <th>6 GHz Channel</th>
+                        </tr>
+                    </thead>
+                    <tbody id="apTableBody">
+                        <!-- Data will be inserted here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <script>
+            // DOM Elements
+            const dropzone = document.getElementById("dropzone");
+            const fileInput = document.getElementById("fileInput");
+            const results = document.getElementById("results");
+            const apTableBody = document.getElementById("apTableBody");
+            const copyCSVButton = document.getElementById("copyCSV");
+            const downloadCSVButton = document.getElementById("downloadCSV");
+            const statusMessage = document.getElementById("statusMessage");
+            const loader = document.getElementById("loader");
+
+            // Global variable to store the processed data
+            let apData = [];
+
+            // Event Listeners
+            dropzone.addEventListener("click", () => fileInput.click());
+            fileInput.addEventListener("change", handleFileSelect);
+            dropzone.addEventListener("dragover", handleDragOver);
+            dropzone.addEventListener("dragleave", handleDragLeave);
+            dropzone.addEventListener("drop", handleDrop);
+            copyCSVButton.addEventListener("click", copyToCSV);
+            downloadCSVButton.addEventListener("click", downloadCSV);
+
+            // Handle drag events
+            function handleDragOver(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.add("highlight");
+            }
+
+            function handleDragLeave(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove("highlight");
+            }
+
+            function handleDrop(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                dropzone.classList.remove("highlight");
+
+                const dt = e.dataTransfer;
+                const files = dt.files;
+
+                if (files.length) {
+                    processFile(files[0]);
+                }
+            }
+
+            function handleFileSelect(e) {
+                const files = e.target.files;
+                if (files.length) {
+                    processFile(files[0]);
+                }
+            }
+
+            // Process the dropped or selected file
+            function processFile(file) {
+                // Clear previous data
+                clearStatus();
+                apTableBody.innerHTML = "";
+                apData = [];
+
+                // Check if the file is JSON
+                if (!file.name.toLowerCase().endsWith(".json")) {
+                    showStatus("Please select a JSON file.", "error");
+                    return;
+                }
+
+                // Show loading indicator
+                loader.style.display = "block";
+
+                const reader = new FileReader();
+
+                reader.onload = function (e) {
+                    try {
+                        const jsonData = JSON.parse(e.target.result);
+                        processOpenIntentData(jsonData);
+                    } catch (error) {
+                        showStatus(
+                            "Error parsing the JSON file: " + error.message,
+                            "error",
+                        );
+                        loader.style.display = "none";
+                    }
+                };
+
+                reader.onerror = function () {
+                    showStatus("Error reading the file.", "error");
+                    loader.style.display = "none";
+                };
+
+                reader.readAsText(file);
+            }
+
+            // Process the OpenIntent data
+            function processOpenIntentData(data) {
+                try {
+                    // Check if the data has the expected structure
+                    if (
+                        !data.accesspoints ||
+                        !Array.isArray(data.accesspoints) ||
+                        !data.floorplans
+                    ) {
+                        throw new Error("Invalid OpenIntent file format.");
+                    }
+
+                    // Process each access point
+                    data.accesspoints.forEach((ap) => {
+                        const mapName = ap.floorplan_name || "Unknown";
+                        const apName = ap.name || "Unknown";
+
+                        let channel2_4 = "N/A";
+                        let channel5 = "N/A";
+                        let channel6 = "N/A";
+
+                        // Process each radio in the access point
+                        if (ap.dot11_radios && Array.isArray(ap.dot11_radios)) {
+                            ap.dot11_radios.forEach((radio) => {
+                                // Skip disabled radios
+                                if (radio.radio_function === "DISABLED") {
+                                    return;
+                                }
+
+                                // Assign channel based on band
+                                if (
+                                    radio.band === "FREQ_2.4GHZ" &&
+                                    radio.channel
+                                ) {
+                                    channel2_4 = radio.channel;
+                                } else if (
+                                    radio.band === "FREQ_5GHZ" &&
+                                    radio.channel
+                                ) {
+                                    channel5 = radio.channel;
+                                } else if (
+                                    radio.band === "FREQ_6GHZ" &&
+                                    radio.channel
+                                ) {
+                                    channel6 = radio.channel;
+                                }
+                            });
+                        }
+
+                        // Add the processed data to our array
+                        apData.push({
+                            mapName,
+                            apName,
+                            channel2_4,
+                            channel5,
+                            channel6,
+                        });
+                    });
+
+                    // Sort by map name and then AP name alphanumerically
+                    apData.sort((a, b) => {
+                        // First sort by map name alphanumerically
+                        if (a.mapName !== b.mapName) {
+                            return a.mapName.localeCompare(
+                                b.mapName,
+                                undefined,
+                                { numeric: true, sensitivity: "base" },
+                            );
+                        }
+                        // Then sort by AP name alphanumerically
+                        return a.apName.localeCompare(b.apName, undefined, {
+                            numeric: true,
+                            sensitivity: "base",
+                        });
+                    });
+
+                    // Display the data in the table
+                    displayApData();
+
+                    // Show success message
+                    showStatus(
+                        `Successfully processed ${apData.length} access points.`,
+                        "success",
+                    );
+
+                    // Show results and enable buttons
+                    results.style.display = "block";
+                    copyCSVButton.disabled = false;
+                    downloadCSVButton.disabled = false;
+                } catch (error) {
+                    showStatus(
+                        "Error processing the OpenIntent data: " +
+                            error.message,
+                        "error",
+                    );
+                } finally {
+                    loader.style.display = "none";
+                }
+            }
+
+            // Display the AP data in the table
+            function displayApData() {
+                apTableBody.innerHTML = "";
+
+                apData.forEach((ap) => {
+                    const row = document.createElement("tr");
+
+                    row.innerHTML = `
+                    <td>${escapeHTML(ap.mapName)}</td>
+                    <td>${escapeHTML(ap.apName)}</td>
+                    <td>${escapeHTML(String(ap.channel2_4))}</td>
+                    <td>${escapeHTML(String(ap.channel5))}</td>
+                    <td>${escapeHTML(String(ap.channel6))}</td>
+                `;
+
+                    apTableBody.appendChild(row);
+                });
+            }
+
+            // Convert the data to CSV format
+            function generateCSV() {
+                const headers = [
+                    "Map Name",
+                    "AP Name",
+                    "2.4 GHz Channel",
+                    "5 GHz Channel",
+                    "6 GHz Channel",
+                ];
+                const csvRows = [];
+
+                // Add the headers
+                csvRows.push(headers.join(","));
+
+                // Add the data rows
+                apData.forEach((ap) => {
+                    const values = [
+                        escapeCsvValue(ap.mapName),
+                        escapeCsvValue(ap.apName),
+                        escapeCsvValue(String(ap.channel2_4)),
+                        escapeCsvValue(String(ap.channel5)),
+                        escapeCsvValue(String(ap.channel6)),
+                    ];
+                    csvRows.push(values.join(","));
+                });
+
+                return csvRows.join("\n");
+            }
+
+            // Copy CSV data to clipboard
+            function copyToCSV() {
+                const csvContent = generateCSV();
+
+                // Create a temporary textarea to copy from
+                const textarea = document.createElement("textarea");
+                textarea.value = csvContent;
+                document.body.appendChild(textarea);
+                textarea.select();
+
+                try {
+                    const successful = document.execCommand("copy");
+                    if (successful) {
+                        showStatus("CSV data copied to clipboard!", "success");
+                    } else {
+                        showStatus("Failed to copy to clipboard.", "error");
+                    }
+                } catch (err) {
+                    showStatus("Error copying to clipboard: " + err, "error");
+                }
+
+                document.body.removeChild(textarea);
+            }
+
+            // Download CSV file
+            function downloadCSV() {
+                const csvContent = generateCSV();
+                const blob = new Blob([csvContent], {
+                    type: "text/csv;charset=utf-8;",
+                });
+                const url = URL.createObjectURL(blob);
+
+                const link = document.createElement("a");
+                link.setAttribute("href", url);
+                link.setAttribute("download", "ap-list.csv");
+                link.style.visibility = "hidden";
+
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+
+            // Utility: Show status message
+            function showStatus(message, type) {
+                statusMessage.textContent = message;
+                statusMessage.className = "status " + type;
+            }
+
+            // Utility: Clear status message
+            function clearStatus() {
+                statusMessage.textContent = "";
+                statusMessage.className = "status";
+            }
+
+            // Utility: Escape HTML to prevent XSS
+            function escapeHTML(str) {
+                return str
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+
+            // Utility: Escape CSV values (wrap in quotes if needed)
+            function escapeCsvValue(value) {
+                if (value === null || value === undefined) {
+                    return "";
+                }
+
+                const str = String(value);
+
+                // If the value contains commas, quotes, or newlines, wrap it in quotes
+                if (
+                    str.includes(",") ||
+                    str.includes('"') ||
+                    str.includes("\n")
+                ) {
+                    // Double up any quotes
+                    return '"' + str.replace(/"/g, '""') + '"';
+                }
+
+                return str;
+            }
+        </script>
+    </body>
+</html>
